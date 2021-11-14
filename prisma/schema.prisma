@@ -1,0 +1,26 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["mongoDb"]
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model Weight {
+  id      String @id @default(dbgenerated()) @map("_id") @db.ObjectId
+  tgId    String
+  choreId String @db.ObjectId
+  chore   Chore  @relation(fields: [choreId], references: [id])
+  value   Float  @default(1.0)
+}
+
+model Chore {
+  id      String   @id @default(dbgenerated()) @map("_id") @db.ObjectId
+  name    String
+  weights Weight[]
+}

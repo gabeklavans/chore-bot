@@ -1,0 +1,21 @@
+{
+  "name": "chore-bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "bot.js",
+  "scripts": {},
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^16.11.7",
+    "prisma": "^3.4.2",
+    "ts-node": "^10.4.0",
+    "typescript": "^4.4.4"
+  },
+  "dependencies": {
+    "@grammyjs/stateless-question": "^3.0.1",
+    "@prisma/client": "^3.4.2",
+    "dotenv": "^10.0.0",
+    "grammy": "^1.4.0"
+  }
+}
