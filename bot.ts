@@ -1,21 +1,55 @@
 import dotenv from "dotenv";
 dotenv.config();
-import { Bot } from "grammy";
+import { Bot, Context } from "grammy";
 import { StatelessQuestion } from "@grammyjs/stateless-question";
 import { PrismaClient } from "@prisma/client";
-import { User } from "@grammyjs/types";
-import {} from "node-schedule";
+import { ChatMember, User } from "@grammyjs/types";
+import { scheduleJob } from "node-schedule";
+import {
+	addDays,
+	addSeconds,
+	format,
+	formatRelative,
+	isBefore,
+	setHours,
+	setMinutes,
+	setSeconds,
+} from "date-fns";
 
 const prisma = new PrismaClient();
 
 const bot = new Bot(process.env.BOT_API_KEY as string);
+
+const CUTOFF_TIME = {
+	hour: 20,
+	minute: 0,
+	second: 0,
+};
+
+const JOINON_TIME = {
+	hour: 8,
+	minute: 0,
+	second: 0,
+};
+
+const cutoffDate = setSeconds(
+	setMinutes(setHours(new Date(), CUTOFF_TIME.hour), CUTOFF_TIME.minute),
+	CUTOFF_TIME.second
+);
 
 const parseChoreName = (messageText: String) => {
 	const tokens = messageText.split(" ");
 	if (tokens.length < 2) {
 		return undefined;
 	}
-	return tokens[1];
+	return tokens[1].toLowerCase();
+};
+
+const sendReminder = (ctx: Context, asignee: ChatMember, choreName: string) => {
+	ctx.reply(
+		`It's time for [${asignee.user.first_name}](tg://user?id=${asignee.user.id}) to do ${choreName}.`,
+		{ parse_mode: "MarkdownV2" }
+	);
 };
 
 const queryChoreName = new StatelessQuestion("choreName", async (ctx) => {
@@ -24,16 +58,16 @@ const queryChoreName = new StatelessQuestion("choreName", async (ctx) => {
 	if (!name) {
 		ctx.reply("Please enter a valid name!");
 	} else if (/\s/.test(name)) {
-		ctx.reply("A name cannot contain any whitespaces");
+		ctx.reply("A name cannot contain any whitespaces.");
 	} else {
 		const chore = await prisma.chore.create({
 			data: {
-				name: name as string,
+				name: (name as string).toLowerCase(),
 			},
 		});
 		console.log(chore);
 
-		ctx.reply(`Created chore: "${chore.name}"`);
+		ctx.reply(`Created chore: "${chore.name}".`);
 	}
 });
 
@@ -62,7 +96,7 @@ const queryUsers = new StatelessQuestion("usersList", async (ctx) => {
 			data: users,
 		});
 
-		ctx.reply(`${numWeights.count} users set for "${chore!.name}"`);
+		ctx.reply(`${numWeights.count} users set for "${chore!.name}".`);
 	}
 });
 
@@ -95,13 +129,13 @@ bot.command("setusers", (ctx) => {
 bot.command("due", async (ctx) => {
 	const message = ctx.message!.text;
 
-	// get the chore name entered
+	// === get the chore name entered
 	const choreName = parseChoreName(message);
 	if (!choreName) {
 		return ctx.reply("Please also type the name of the chore that is due.");
 	}
 
-	// get list of weights and users for the chore
+	// === get list of weights and users for the chore
 	const weights = await prisma.chore
 		.findFirst({
 			where: { name: choreName },
@@ -111,14 +145,44 @@ bot.command("due", async (ctx) => {
 		return ctx.reply("No users assigned to this chore.");
 	}
 
-	// decide which user to assign the chore to
+	// === decide which user to assign the chore to
 	const asignee = await ctx.getChatMember(weights[0].tgId);
 
-	// ping the chat
-	ctx.reply(
-		`It's time for [${asignee.user.first_name}](tg://user?id=${asignee.user.id}) to do ${choreName}`,
-		{ parse_mode: "MarkdownV2" }
+	// === determine when to send the message
+	const currentDate = new Date();
+	// current time in terms of the cutoffDate's date
+	const currentTime = setSeconds(
+		setMinutes(
+			setHours(new Date(cutoffDate), currentDate.getHours()),
+			currentDate.getMinutes()
+		),
+		currentDate.getSeconds()
 	);
+	if (isBefore(currentTime, cutoffDate)) {
+		// before cutoff, remind immediately
+		sendReminder(ctx, asignee, choreName);
+	} else {
+		// get a date that's tomorrow at the JOINON time
+		const scheduleDate = setSeconds(
+			setMinutes(
+				setHours(addDays(currentDate, 1), JOINON_TIME.hour),
+				JOINON_TIME.minute
+			),
+			JOINON_TIME.second
+		);
+		scheduleJob(choreName, scheduleDate, () => {
+			sendReminder(ctx, asignee, choreName);
+		});
+		ctx.reply(
+			`It's too late\\! Scheduling a reminder ${formatRelative(
+				scheduleDate,
+				currentDate
+			)} for [${asignee.user.first_name}](tg://user?id=${
+				asignee.user.id
+			})\\.`,
+			{ parse_mode: "MarkdownV2" }
+		);
+	}
 });
 
 // bot.on("message", (ctx) => {
