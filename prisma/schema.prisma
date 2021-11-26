@@ -22,6 +22,6 @@ model Weight {
 model Chore {
   id      String   @id @default(dbgenerated()) @map("_id") @db.ObjectId
   isDue   Boolean  @default(false)
-  name    String
+  name    String   @unique
   weights Weight[]
 }

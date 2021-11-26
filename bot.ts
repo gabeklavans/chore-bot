@@ -47,9 +47,19 @@ const parseChoreName = (messageText: String) => {
 
 const sendReminder = (ctx: Context, asignee: ChatMember, choreName: string) => {
 	ctx.reply(
-		`It's time for [${asignee.user.first_name}](tg://user?id=${asignee.user.id}) to do ${choreName}.`,
+		`It's time for [${asignee.user.first_name}](tg://user?id=${asignee.user.id}) to do ${choreName}`,
 		{ parse_mode: "MarkdownV2" }
 	);
+
+	// set the chore as due till someone replies
+	prisma.chore
+		.update({
+			where: { name: choreName },
+			data: { isDue: true },
+		})
+		.then((chore) => {
+			console.log(`${chore.name} is now due.`);
+		});
 };
 
 const queryChoreName = new StatelessQuestion("choreName", async (ctx) => {
@@ -58,23 +68,29 @@ const queryChoreName = new StatelessQuestion("choreName", async (ctx) => {
 	if (!name) {
 		ctx.reply("Please enter a valid name!");
 	} else if (/\s/.test(name)) {
-		ctx.reply("A name cannot contain any whitespaces.");
+		ctx.reply("A name cannot contain any whitespaces");
 	} else {
-		const chore = await prisma.chore.create({
-			data: {
-				name: (name as string).toLowerCase(),
-			},
-		});
-		console.log(chore);
-
-		ctx.reply(`Created chore: "${chore.name}".`);
+		try {
+			const chore = await prisma.chore.create({
+				data: {
+					name: (name as string).toLowerCase(),
+				},
+			});
+			ctx.reply(`Created chore: "${chore.name}".`);
+		} catch (error) {
+			// Error might be duplicate chore name
+			// TODO: Parse errors better
+			ctx.reply(
+				`Error creating chore: "${name}". Try a different name?"`
+			);
+		}
 	}
 });
 
 const queryUsers = new StatelessQuestion("usersList", async (ctx) => {
 	if (ctx.message.entities) {
 		const chore = await prisma.chore.findFirst({
-			where: { id: "6190a4578190340c57d3de00" },
+			where: { name: "garbo" },
 		});
 
 		const tgUsers: User[] = ctx.message.entities
@@ -96,7 +112,7 @@ const queryUsers = new StatelessQuestion("usersList", async (ctx) => {
 			data: users,
 		});
 
-		ctx.reply(`${numWeights.count} users set for "${chore!.name}".`);
+		ctx.reply(`${numWeights.count} users set for "${chore!.name}"`);
 	}
 });
 
@@ -104,7 +120,7 @@ bot.use(queryChoreName);
 bot.use(queryUsers);
 
 // React to /start command
-bot.command("start", (ctx) => ctx.reply("Welcome! Up and running."));
+bot.command("start", (ctx) => ctx.reply("Welcome! Up and running"));
 
 bot.command("newchore", (ctx) => {
 	return queryChoreName.replyWithMarkdown(
@@ -117,12 +133,12 @@ bot.command("setusers", (ctx) => {
 	// get the chore name entered
 	const choreName = parseChoreName(ctx.message!.text);
 	if (!choreName) {
-		return ctx.reply("Please also type the name of the chore.");
+		return ctx.reply("Please also type the name of the chore");
 	}
 
 	return queryUsers.replyWithMarkdown(
 		ctx,
-		`Mention all the users to be assigned to this chore (this will erase the existing users).`
+		`Mention all the users to be assigned to this chore (this will erase the existing users)`
 	);
 });
 
@@ -132,7 +148,7 @@ bot.command("due", async (ctx) => {
 	// === get the chore name entered
 	const choreName = parseChoreName(message);
 	if (!choreName) {
-		return ctx.reply("Please also type the name of the chore that is due.");
+		return ctx.reply("Please also type the name of the chore that is due");
 	}
 
 	// === get list of weights and users for the chore
@@ -142,7 +158,7 @@ bot.command("due", async (ctx) => {
 		})
 		.weights();
 	if (weights.length < 1) {
-		return ctx.reply("No users assigned to this chore.");
+		return ctx.reply("No users assigned to this chore");
 	}
 
 	// === decide which user to assign the chore to
@@ -183,6 +199,35 @@ bot.command("due", async (ctx) => {
 			{ parse_mode: "MarkdownV2" }
 		);
 	}
+});
+
+bot.command("done", async (ctx) => {
+	const message = ctx.message!.text;
+
+	// === get the chore name entered
+	const choreName = parseChoreName(message);
+	if (!choreName) {
+		return ctx.reply("Please also type the name of the chore that is done");
+	}
+
+	const chore = await prisma.chore.findUnique({ where: { name: choreName } });
+	if (!chore) {
+		return ctx.reply("Please enter a valid chore name");
+	}
+
+	if (!chore.isDue) {
+		return ctx.reply("That chore is not due yet");
+	}
+
+	await prisma.chore.update({
+		where: { id: chore.id },
+		data: { isDue: false },
+	});
+	const doer = (await ctx.getAuthor()).user;
+	return ctx.reply(
+		`[${doer.first_name}](tg://user?id=${doer.id}) completed the chore: ${choreName}`,
+		{ parse_mode: "MarkdownV2" }
+	);
 });
 
 // bot.on("message", (ctx) => {
