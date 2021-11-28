@@ -15,6 +15,7 @@ import {
 	setMinutes,
 	setSeconds,
 } from "date-fns";
+import { ReplyToMessageContext } from "@grammyjs/stateless-question/dist/source/identifier";
 
 const prisma = new PrismaClient();
 
@@ -87,34 +88,54 @@ const queryChoreName = new StatelessQuestion("choreName", async (ctx) => {
 	}
 });
 
-const queryUsers = new StatelessQuestion("usersList", async (ctx) => {
-	if (ctx.message.entities) {
-		const chore = await prisma.chore.findFirst({
-			where: { name: "garbo" },
-		});
+const queryUsers = new StatelessQuestion(
+	"usersList",
+	async (ctx: ReplyToMessageContext<Context>) => {
+		let choreName;
+		if (ctx.message) {
+			choreName = parseChoreName(ctx.message!.text!);
+		}
+		if (ctx.message.entities) {
+			const chore = await prisma.chore.findFirst({
+				where: { name: choreName },
+			});
 
-		const tgUsers: User[] = ctx.message.entities
-			.filter((entity) => entity.type === "text_mention")
-			.map((entity: any) => entity.user)
-			.filter((user: User) => !user.is_bot);
+			const tgUsers: User[] = ctx.message.entities
+				.filter((entity) => entity.type === "text_mention")
+				.map((entity: any) => entity.user)
+				.filter((user: User) => !user.is_bot);
 
-		const users = tgUsers.map((users) => {
-			return {
-				tgId: users.id,
-				choreId: chore!.id,
-			};
-		});
+			const users = tgUsers.map((users) => {
+				return {
+					tgId: users.id,
+					choreId: chore!.id,
+				};
+			});
 
-		// Clear out whatever was there already
-		await prisma.weight.deleteMany({ where: { choreId: chore!.id } });
-		// Create new weight entries for the users
-		const numWeights = await prisma.weight.createMany({
-			data: users,
-		});
+			// if we find "me" then we add on their ID
+			const sender = ctx.message
+				.text!.split(" ")
+				.reduce((found, name) => name === "me" || found, false)
+				? await ctx.getAuthor()
+				: undefined;
+			if (sender) {
+				users.push({
+					tgId: sender.user.id,
+					choreId: chore!.id,
+				});
+			}
 
-		ctx.reply(`${numWeights.count} users set for "${chore!.name}"`);
+			// Clear out whatever was there already
+			await prisma.weight.deleteMany({ where: { choreId: chore!.id } });
+			// Create new weight entries for the users
+			const numWeights = await prisma.weight.createMany({
+				data: users,
+			});
+
+			ctx.reply(`${numWeights.count} users set for "${chore!.name}"`);
+		}
 	}
-});
+);
 
 bot.use(queryChoreName);
 bot.use(queryUsers);
@@ -138,7 +159,7 @@ bot.command("setusers", (ctx) => {
 
 	return queryUsers.replyWithMarkdown(
 		ctx,
-		`Mention all the users to be assigned to this chore (this will erase the existing users)`
+		`Mention all the users (space-separated) to be assigned to this chore (this will erase the existing users). Note: type "me" to include yourself.`
 	);
 });
 
