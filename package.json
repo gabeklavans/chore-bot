@@ -22,6 +22,7 @@
     "date-fns": "^2.25.0",
     "dotenv": "^10.0.0",
     "grammy": "^1.4.0",
-    "node-schedule": "^2.0.0"
+    "node-schedule": "^2.0.0",
+    "weighted": "^1.0.0"
   }
 }

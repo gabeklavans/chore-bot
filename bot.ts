@@ -7,15 +7,13 @@ import { ChatMember, User } from "@grammyjs/types";
 import { scheduleJob } from "node-schedule";
 import {
 	addDays,
-	addSeconds,
-	format,
 	formatRelative,
 	isBefore,
 	setHours,
 	setMinutes,
 	setSeconds,
 } from "date-fns";
-import { ReplyToMessageContext } from "@grammyjs/stateless-question/dist/source/identifier";
+import weighted from "weighted";
 
 const prisma = new PrismaClient();
 
@@ -38,12 +36,14 @@ const cutoffDate = setSeconds(
 	CUTOFF_TIME.second
 );
 
-const parseChoreName = (messageText: String) => {
-	const tokens = messageText.split(" ");
-	if (tokens.length < 2) {
-		return undefined;
+const parseChoreName = (messageText?: string) => {
+	if (messageText) {
+		const tokens = messageText.split(" ");
+		if (tokens.length < 2) {
+			return undefined;
+		}
+		return tokens[1].toLowerCase();
 	}
-	return tokens[1].toLowerCase();
 };
 
 const sendReminder = (ctx: Context, asignee: ChatMember, choreName: string) => {
@@ -90,15 +90,16 @@ const queryChoreName = new StatelessQuestion("choreName", async (ctx) => {
 
 const queryUsers = new StatelessQuestion(
 	"usersList",
-	async (ctx: ReplyToMessageContext<Context>) => {
-		let choreName;
-		if (ctx.message) {
-			choreName = parseChoreName(ctx.message!.text!);
-		}
+	async (ctx, choreName) => {
 		if (ctx.message.entities) {
-			const chore = await prisma.chore.findFirst({
+			const chore = await prisma.chore.findUnique({
 				where: { name: choreName },
 			});
+
+			if (!chore) {
+				ctx.reply("Chore not found (shouldn't get here)");
+				return;
+			}
 
 			const tgUsers: User[] = ctx.message.entities
 				.filter((entity) => entity.type === "text_mention")
@@ -108,7 +109,7 @@ const queryUsers = new StatelessQuestion(
 			const users = tgUsers.map((users) => {
 				return {
 					tgId: users.id,
-					choreId: chore!.id,
+					choreId: chore.id,
 				};
 			});
 
@@ -150,16 +151,23 @@ bot.command("newchore", (ctx) => {
 	);
 });
 
-bot.command("setusers", (ctx) => {
+bot.command("setusers", async (ctx) => {
 	// get the chore name entered
-	const choreName = parseChoreName(ctx.message!.text);
+	const choreName = parseChoreName(ctx.message?.text);
 	if (!choreName) {
 		return ctx.reply("Please also type the name of the chore");
+	}
+	const chore = await prisma.chore.findFirst({
+		where: { name: choreName },
+	});
+	if (!chore) {
+		return ctx.reply("Chore not found");
 	}
 
 	return queryUsers.replyWithMarkdown(
 		ctx,
-		`Mention all the users (space-separated) to be assigned to this chore (this will erase the existing users). Note: type "me" to include yourself.`
+		`Mention all the users (space-separated) to be assigned to this chore (this will erase the existing users). Note: type "me" to include yourself.`,
+		choreName
 	);
 });
 
@@ -172,9 +180,17 @@ bot.command("due", async (ctx) => {
 		return ctx.reply("Please also type the name of the chore that is due");
 	}
 
+	// === validate the chore
+	const chore = await prisma.chore.findUnique({
+		where: { name: choreName },
+	});
+	if (chore?.isDue) {
+		return ctx.reply("The chore is already due");
+	}
+
 	// === get list of weights and users for the chore
 	const weights = await prisma.chore
-		.findFirst({
+		.findUnique({
 			where: { name: choreName },
 		})
 		.weights();
@@ -183,7 +199,9 @@ bot.command("due", async (ctx) => {
 	}
 
 	// === decide which user to assign the chore to
-	const asignee = await ctx.getChatMember(weights[0].tgId);
+	const weightVals = weights.map((weight) => weight.value);
+	const asigneeWeight = weighted.select(weights, weightVals);
+	const asignee = await ctx.getChatMember(asigneeWeight.tgId);
 
 	// === determine when to send the message
 	const currentDate = new Date();
