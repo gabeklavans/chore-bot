@@ -31,6 +31,9 @@ const JOINON_TIME = {
 	second: 0,
 };
 
+const ASSIGNED_BONUS = 2;
+const NON_ASSIGNED_BONUS = 3;
+
 const cutoffDate = setSeconds(
 	setMinutes(setHours(new Date(), CUTOFF_TIME.hour), CUTOFF_TIME.minute),
 	CUTOFF_TIME.second
@@ -202,6 +205,14 @@ bot.command("due", async (ctx) => {
 	const weightVals = weights.map((weight) => weight.value);
 	const asigneeWeight = weighted.select(weights, weightVals);
 	const asignee = await ctx.getChatMember(asigneeWeight.tgId);
+	console.log(
+		`${asignee.user.first_name}(id: ${asignee.user.id}) is due for "${choreName}"`
+	);
+	// set the assigned user
+	await prisma.chore.update({
+		where: { name: choreName },
+		data: { asigneeTgId: asignee.user.id },
+	});
 
 	// === determine when to send the message
 	const currentDate = new Date();
@@ -258,13 +269,53 @@ bot.command("done", async (ctx) => {
 		return ctx.reply("That chore is not due yet");
 	}
 
+	// ==== get doer
+	const doer = (await ctx.getAuthor()).user;
+	console.log(`${doer.first_name}(id: ${doer.id}) completed "${choreName}"`);
+
+	// ==== rebalance weights
+	const weights = await prisma.chore
+		.findUnique({
+			where: { name: choreName },
+		})
+		.weights();
+	const doerWeightIndex = weights.findIndex(
+		(weight) => weight.tgId === doer.id
+	);
+	if (doerWeightIndex) {
+		// set new weight for doer
+		const newDoerWeightVal =
+			doer.id === chore.asigneeTgId
+				? weights[doerWeightIndex].value / ASSIGNED_BONUS
+				: weights[doerWeightIndex].value / NON_ASSIGNED_BONUS;
+		weights[doerWeightIndex].value = newDoerWeightVal;
+
+		// normalize weights to 1
+		const weightValsSum = weights.reduce(
+			(total, nextWeight) => total + nextWeight.value,
+			0
+		);
+		weights.forEach(
+			(weight) => (weight.value = weight.value / weightValsSum)
+		);
+
+		// update all weights
+		for (const weight of weights) {
+			await prisma.weight.update({
+				where: { id: weight.id },
+				data: { value: weight.value },
+			});
+		}
+	}
+
+	// ==== set chore as no longer due & remove asignee
 	await prisma.chore.update({
 		where: { id: chore.id },
-		data: { isDue: false },
+		data: { isDue: false, asigneeTgId: undefined },
 	});
-	const doer = (await ctx.getAuthor()).user;
+
 	return ctx.reply(
-		`[${doer.first_name}](tg://user?id=${doer.id}) completed the chore: ${choreName}`,
+		`[${doer.first_name}](tg://user?id=${doer.id}) completed ${choreName}`,
 		{ parse_mode: "MarkdownV2" }
 	);
 });
