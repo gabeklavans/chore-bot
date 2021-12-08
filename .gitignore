@@ -1,4 +1,7 @@
 node_modules
-# Keep environment variables out of version control
+
+# ignore any build files
+**/*.js
+
 .env
 .DS_Store

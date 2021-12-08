@@ -4,6 +4,7 @@
   "description": "",
   "main": "bot.js",
   "scripts": {
+    "start": "tsc && node bot.js",
     "dev": "nodemon bot.ts"
   },
   "author": "",
